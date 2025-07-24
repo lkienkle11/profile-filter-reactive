@@ -1,6 +1,8 @@
 package com.microservices;
 
+import com.microservices.dto.security.UserInfo;
 import com.microservices.dto.security.UserPrincipal;
+import com.microservices.security.JwtTokenProvider;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
@@ -19,8 +21,8 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -34,74 +36,72 @@ public class ProfileFilter implements WebFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         HttpHeaders headers = exchange.getRequest().getHeaders();
-        String userIdHeader = headers.getFirst("X-User-Id");
 
-        // Nếu không có X-User-Id, bỏ qua filter
-        if (!StringUtils.hasText(userIdHeader)) {
+        String nextToken = headers.getFirst("X-Next-Token");
+        String decodeKey = headers.getFirst("X-Decode-Key");
+
+        if (!StringUtils.hasText(nextToken) || !StringUtils.hasText(decodeKey)) {
+            // Nếu không có X-Next-Token hoặc X-Decode-Key, bỏ qua filter
             return chain.filter(exchange);
         }
 
-        // Lấy thông tin user từ header
-        long userId = Long.parseLong(userIdHeader);
-        String username = headers.getFirst("X-Username");
-        String rolesHeader = headers.getFirst("X-Authorities-Roles");
-        String permsHeader = headers.getFirst("X-Authorities-Permissions");
-        boolean enabled = Boolean.parseBoolean(headers.getFirst("X-User-Enabled"));
-        String firstName = headers.getFirst("X-User-FirstName");
-        String lastName = headers.getFirst("X-User-LastName");
-        String avatar = headers.getFirst("X-User-Avatar");
-        String userCode = headers.getFirst("X-User-Code");
-        boolean gender = Boolean.parseBoolean(headers.getFirst("X-User-Gender"));
-        String email = headers.getFirst("X-User-Email");
-        String phone = headers.getFirst("X-User-PhoneNumber");
-        String address = headers.getFirst("X-User-Address");
-        String userTz = headers.getFirst("X-User-UserTz");
+        JwtTokenProvider jwtTokenProvider = new JwtTokenProvider(decodeKey);
 
-        // Build danh sách authorities từ roles và permissions
-        List<GrantedAuthority> authorities = new ArrayList<>();
-        if (StringUtils.hasText(rolesHeader)) {
-            Arrays.stream(rolesHeader.split(","))
-                    .map(String::trim)
-                    .filter(r -> !r.isEmpty())
-                    .forEach(r -> authorities.add(new SimpleGrantedAuthority(r)));
+        try {
+            Map<String, Object> claims = jwtTokenProvider.getPropertiesFromClaims(nextToken);
+            if (!"next_token".equals(claims.get("type"))) {
+                return chain.filter(exchange);
+            }
+            Object userInfoObj = claims.get("user");
+            if (!(userInfoObj instanceof UserInfo userInfo)) {
+                return chain.filter(exchange);
+            }
+            List<GrantedAuthority> authorities = new ArrayList<>();
+            if (userInfo.getRoles() != null) {
+                userInfo.getRoles()
+                        .stream()
+                        .filter(StringUtils::hasText)
+                        .forEach(role -> authorities.add(new SimpleGrantedAuthority(role)));
+            }
+            if (userInfo.getPermissions() != null) {
+                userInfo.getPermissions()
+                        .stream()
+                        .filter(StringUtils::hasText)
+                        .forEach(permission -> authorities.add(new SimpleGrantedAuthority(permission)));
+            }
+            // Tạo principal
+            UserPrincipal principal = UserPrincipal.builder()
+                    .id(userInfo.getId())
+                    .userName(userInfo.getUserName())
+                    .firstName(userInfo.getFirstName())
+                    .lastName(userInfo.getLastName())
+                    .avatar(userInfo.getAvatar())
+                    .userCode(userInfo.getUserCode())
+                    .email(userInfo.getEmail())
+                    .phoneNumber(userInfo.getPhoneNumber())
+                    .address(userInfo.getAddress())
+                    .gender(userInfo.getGender())
+                    .isEnabled(userInfo.getIsEnabled())
+                    .userTz(userInfo.getUserTz())
+                    .authorities(authorities)
+                    .build();
+            // Tạo authentication token
+            UsernamePasswordAuthenticationToken auth =
+                    new UsernamePasswordAuthenticationToken(principal, null, authorities);
+            ServerHttpRequest mutatedReq = exchange.getRequest().mutate()
+                    .header("X-Token-ID", headers.getFirst("X-Token-ID"))
+                    .build();
+            ServerWebExchange mutatedExchange = exchange.mutate()
+                    .request(mutatedReq)
+                    .build();
+
+            // Đặt vào reactive security context và forward request
+            return chain.filter(mutatedExchange)
+                    .contextWrite(ReactiveSecurityContextHolder.withAuthentication(auth));
+        } catch (Exception e) {
+            // Nếu có lỗi khi giải mã token, bỏ qua filter
+            return chain.filter(exchange);
         }
-        if (StringUtils.hasText(permsHeader)) {
-            Arrays.stream(permsHeader.split(","))
-                    .map(String::trim)
-                    .filter(p -> !p.isEmpty())
-                    .forEach(p -> authorities.add(new SimpleGrantedAuthority(p)));
-        }
-
-        // Tạo principal
-        UserPrincipal principal = UserPrincipal.builder()
-                .id(userId)
-                .userName(username)
-                .firstName(firstName)
-                .lastName(lastName)
-                .avatar(avatar)
-                .userCode(userCode)
-                .email(email)
-                .phoneNumber(phone)
-                .address(address)
-                .gender(gender)
-                .isEnabled(enabled)
-                .userTz(userTz)
-                .authorities(authorities)
-                .build();
-
-        // Tạo authentication token
-        UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(principal, null, authorities);
-        ServerHttpRequest mutatedReq = exchange.getRequest().mutate()
-                .header("X-Token-ID", headers.getFirst("X-Token-ID"))
-                .build();
-        ServerWebExchange mutatedExchange = exchange.mutate()
-                .request(mutatedReq)
-                .build();
-
-        // Đặt vào reactive security context và forward request
-        return chain.filter(mutatedExchange)
-                .contextWrite(ReactiveSecurityContextHolder.withAuthentication(auth));
     }
 }
 
