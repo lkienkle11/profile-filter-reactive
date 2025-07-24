@@ -1,5 +1,6 @@
 package com.microservices;
 
+import com.microservices.config.ProfileFilterProperties;
 import com.microservices.dto.security.UserInfo;
 import com.microservices.dto.security.UserPrincipal;
 import com.microservices.security.JwtTokenProvider;
@@ -28,6 +29,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
 public class ProfileFilter implements WebFilter, Ordered {
+    ProfileFilterProperties props;
+
     @Override
     public int getOrder() {
         return Ordered.HIGHEST_PRECEDENCE + 100;
@@ -38,14 +41,14 @@ public class ProfileFilter implements WebFilter, Ordered {
         HttpHeaders headers = exchange.getRequest().getHeaders();
 
         String nextToken = headers.getFirst("X-Next-Token");
-        String decodeKey = headers.getFirst("X-Decode-Key");
+        String decodeToken = props.getDecodeToken();
 
-        if (!StringUtils.hasText(nextToken) || !StringUtils.hasText(decodeKey)) {
+        if (!StringUtils.hasText(nextToken) || !StringUtils.hasText(decodeToken)) {
             // Nếu không có X-Next-Token hoặc X-Decode-Key, bỏ qua filter
             return chain.filter(exchange);
         }
 
-        JwtTokenProvider jwtTokenProvider = new JwtTokenProvider(decodeKey);
+        JwtTokenProvider jwtTokenProvider = new JwtTokenProvider(decodeToken);
 
         try {
             Map<String, Object> claims = jwtTokenProvider.getPropertiesFromClaims(nextToken);
