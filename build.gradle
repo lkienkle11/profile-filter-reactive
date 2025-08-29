@@ -21,8 +21,8 @@ repositories {
 }
 
 ext {
-    set("sharedCommonClassesVersion", "v0.2.2")
-    set("jwtTokenProviderVersion", "v0.1.4")
+    set("sharedCommonClassesVersion", "v0.2.3")
+    set("jwtTokenProviderVersion", "v0.1.5")
 }
 
 dependencies {

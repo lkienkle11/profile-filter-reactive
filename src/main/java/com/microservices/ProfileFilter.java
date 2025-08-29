@@ -1,9 +1,14 @@
 package com.microservices;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.microservices.config.ProfileFilterProperties;
 import com.microservices.dto.security.UserInfo;
 import com.microservices.dto.security.UserPrincipal;
 import com.microservices.security.JwtTokenProvider;
+import io.jsonwebtoken.Claims;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
@@ -23,12 +28,22 @@ import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
 public class ProfileFilter implements WebFilter, Ordered {
+    private static final ObjectMapper objectMapper;
+
+    static {
+        objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+//        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        objectMapper.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
+    }
+
     ProfileFilterProperties props;
 
     @Override
@@ -51,12 +66,16 @@ public class ProfileFilter implements WebFilter, Ordered {
         JwtTokenProvider jwtTokenProvider = new JwtTokenProvider(decodeToken);
 
         try {
-            Map<String, Object> claims = jwtTokenProvider.getPropertiesFromClaims(nextToken);
+            Claims claims = jwtTokenProvider.parseClaims(nextToken);
             if (!"next_token".equals(claims.get("type"))) {
                 return chain.filter(exchange);
             }
-            Object userInfoObj = claims.get("user");
-            if (!(userInfoObj instanceof UserInfo userInfo)) {
+            String userInfoObj = (String) claims.get("user");
+            if (!StringUtils.hasText(userInfoObj)) {
+                return chain.filter(exchange);
+            }
+            UserInfo userInfo = objectMapper.readValue(userInfoObj, UserInfo.class);
+            if (userInfo == null) {
                 return chain.filter(exchange);
             }
             List<GrantedAuthority> authorities = new ArrayList<>();
