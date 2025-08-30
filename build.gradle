@@ -21,7 +21,7 @@ repositories {
 }
 
 ext {
-    set("sharedCommonClassesVersion", "v0.2.3")
+    set("sharedCommonClassesVersion", "v0.3.0")
     set("jwtTokenProviderVersion", "v0.1.5")
 }
 
